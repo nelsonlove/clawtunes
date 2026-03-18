@@ -7,11 +7,6 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-import click
-
-from clawtunes_helpers.selection import is_non_interactive, select_item
-
-
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 
 
@@ -40,7 +35,7 @@ def search_catalog(query: str, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def format_catalog_results(results: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """Convert API results to (trackViewUrl, display_text) tuples for select_item()."""
+    """Convert API results to (trackViewUrl, display_text) tuples."""
     formatted = []
     for item in results:
         track_url = item.get("trackViewUrl", "")
@@ -55,9 +50,7 @@ def format_catalog_results(results: list[dict[str, Any]]) -> list[tuple[str, str
 def open_catalog_track(track_url: str) -> bool:
     """Open a track URL in the Music app."""
     try:
-        # Convert https:// URL to music:// scheme
         music_url = track_url.replace("https://", "music://")
-
         result = subprocess.run(
             ["open", music_url],
             capture_output=True,
@@ -66,30 +59,3 @@ def open_catalog_track(track_url: str) -> bool:
         return result.returncode == 0
     except Exception:
         return False
-
-
-def search_and_open(query: str, limit: int = 10) -> bool:
-    """Search catalog, let user select, and open the selected track."""
-    results = search_catalog(query, limit)
-
-    if not results:
-        click.echo(f"No results found for '{query}' in Apple Music catalog")
-        return False
-
-    formatted = format_catalog_results(results)
-
-    if len(formatted) == 1:
-        track_url = formatted[0][0]
-        display = formatted[0][1]
-    else:
-        click.echo(f"Found {len(formatted)} results in Apple Music:")
-        result = select_item(formatted, "Select a song")
-        if result is None:
-            if not is_non_interactive():
-                click.echo("Cancelled")
-            return False
-        track_url = result
-        display = next(d for u, d in formatted if u == track_url)
-
-    click.echo(f"Opening in Apple Music: {display}")
-    return open_catalog_track(track_url)

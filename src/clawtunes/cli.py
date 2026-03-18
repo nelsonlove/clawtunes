@@ -2,7 +2,9 @@
 
 import click
 
-from clawtunes_helpers import catalog, playback, status
+from apple_music import MusicClient
+from apple_music import status as music_status
+from clawtunes.selection import is_non_interactive, select_item
 
 
 def format_error(error: str) -> str:
@@ -10,8 +12,8 @@ def format_error(error: str) -> str:
     if "Not authorized" in error or "-1743" in error:
         return (
             f"{error}\n"
-            "Hint: Grant automation access in System Settings → "
-            "Privacy & Security → Automation → enable your terminal to control Music"
+            "Hint: Grant automation access in System Settings > "
+            "Privacy & Security > Automation > enable your terminal to control Music"
         )
     return error
 
@@ -28,6 +30,11 @@ def cli(ctx, non_interactive, first):
     ctx.ensure_object(dict)
     ctx.obj["non_interactive"] = non_interactive
     ctx.obj["first"] = first
+    ctx.obj["client"] = MusicClient()
+
+
+def _client(ctx) -> MusicClient:
+    return ctx.obj["client"]
 
 
 @cli.group()
@@ -39,32 +46,105 @@ def play():
 @play.command("song")
 @click.argument("name")
 @click.option("--artist", "-A", default=None, help="Filter by artist name")
-def play_song(name: str, artist: str | None):
+@click.pass_context
+def play_song(ctx, name: str, artist: str | None):
     """Play a song by name."""
-    if not playback.play_song(name, artist=artist):
+    client = _client(ctx)
+    songs = client.search_songs(name, artist=artist)
+
+    if not songs:
+        click.echo(f"No songs found matching '{name}'")
+        raise SystemExit(1)
+
+    if len(songs) == 1:
+        click.echo(f"Playing: {songs[0][1]}")
+        if not client.play_track(songs[0][0]):
+            raise SystemExit(1)
+        return
+
+    click.echo(f"Found {len(songs)} matching songs:")
+    selected_id = select_item(songs, "Select a song")
+
+    if selected_id is None:
+        if not is_non_interactive():
+            click.echo("Cancelled")
+        raise SystemExit(1)
+
+    selected_display = next(d for i, d in songs if i == selected_id)
+    click.echo(f"Playing: {selected_display}")
+    if not client.play_track(selected_id):
         raise SystemExit(1)
 
 
 @play.command("album")
 @click.argument("name")
-def play_album(name: str):
+@click.pass_context
+def play_album(ctx, name: str):
     """Play an album by name."""
-    if not playback.play_album(name):
+    client = _client(ctx)
+    albums = client.search_albums(name)
+
+    if not albums:
+        click.echo(f"No albums found matching '{name}'")
+        raise SystemExit(1)
+
+    if len(albums) == 1:
+        click.echo(f"Playing album: {albums[0][1]}")
+        if not client.play_album(albums[0][0]):
+            raise SystemExit(1)
+        return
+
+    click.echo(f"Found {len(albums)} matching albums:")
+    selected_name = select_item(albums, "Select an album")
+
+    if selected_name is None:
+        if not is_non_interactive():
+            click.echo("Cancelled")
+        raise SystemExit(1)
+
+    selected_display = next(d for n, d in albums if n == selected_name)
+    click.echo(f"Playing album: {selected_display}")
+    if not client.play_album(selected_name):
         raise SystemExit(1)
 
 
 @play.command("playlist")
 @click.argument("name")
-def play_playlist(name: str):
+@click.pass_context
+def play_playlist(ctx, name: str):
     """Play a playlist by name."""
-    if not playback.play_playlist(name):
+    client = _client(ctx)
+    playlists = client.search_playlists(name)
+
+    if not playlists:
+        click.echo(f"No playlists found matching '{name}'")
+        raise SystemExit(1)
+
+    if len(playlists) == 1:
+        click.echo(f"Playing playlist: {playlists[0][1]}")
+        if not client.play_playlist(playlists[0][0]):
+            raise SystemExit(1)
+        return
+
+    click.echo(f"Found {len(playlists)} matching playlists:")
+    selected_name = select_item(playlists, "Select a playlist")
+
+    if selected_name is None:
+        if not is_non_interactive():
+            click.echo("Cancelled")
+        raise SystemExit(1)
+
+    selected_display = next(d for n, d in playlists if n == selected_name)
+    click.echo(f"Playing playlist: {selected_display}")
+    if not client.play_playlist(selected_name):
         raise SystemExit(1)
 
 
 @cli.command()
-def pause():
+@click.pass_context
+def pause(ctx):
     """Pause playback."""
-    error = playback.pause()
+    error = _client(ctx).pause()
     if error is None:
         click.echo("Paused")
     else:
@@ -73,9 +153,10 @@ def pause():
 
 
 @cli.command()
-def resume():
+@click.pass_context
+def resume(ctx):
     """Resume playback."""
-    error = playback.resume()
+    error = _client(ctx).resume()
     if error is None:
         click.echo("Resumed")
     else:
@@ -84,9 +165,10 @@ def resume():
 
 
 @cli.command("next")
-def next_track():
+@click.pass_context
+def next_track(ctx):
     """Skip to the next track."""
-    error = playback.next_track()
+    error = _client(ctx).next_track()
     if error is None:
         click.echo("Skipped to next track")
     else:
@@ -95,9 +177,10 @@ def next_track():
 
 
 @cli.command("prev")
-def prev_track():
+@click.pass_context
+def prev_track(ctx):
     """Go to the previous track."""
-    error = playback.previous_track()
+    error = _client(ctx).previous_track()
     if error is None:
         click.echo("Went to previous track")
     else:
@@ -107,18 +190,19 @@ def prev_track():
 
 @cli.command("status")
 @click.option("--debug", is_flag=True, help="Show AppleScript output for debugging")
-def show_status(debug: bool):
+@click.pass_context
+def show_status(ctx, debug: bool):
     """Show the currently playing track."""
     if debug:
-        stdout, stderr, returncode = status.get_now_playing_raw()
+        stdout, stderr, returncode = music_status.get_now_playing_raw()
         click.echo(f"AppleScript stdout: {stdout!r}")
         if stderr:
             click.echo(f"AppleScript stderr: {stderr!r}", err=True)
         click.echo(f"AppleScript exit code: {returncode}")
-        now_playing = status.parse_now_playing(stdout, returncode)
+        now_playing = music_status.parse_now_playing(stdout, returncode)
     else:
-        now_playing = status.get_now_playing()
-    player_state = status.get_player_state()
+        now_playing = _client(ctx).now_playing()
+    player_state = _client(ctx).player_state()
 
     if now_playing is None:
         click.echo("Nothing is playing")
@@ -141,10 +225,12 @@ def show_status(debug: bool):
 
 @cli.command("volume")
 @click.argument("level", required=False)
-def volume(level: str | None):
+@click.pass_context
+def volume(ctx, level: str | None):
     """Get or set volume. Use +/- prefix for relative adjustment."""
+    client = _client(ctx)
     if level is None:
-        result = playback.get_volume()
+        result = client.get_volume()
         if result is None:
             click.echo("Failed to get volume", err=True)
             raise SystemExit(1)
@@ -153,17 +239,16 @@ def volume(level: str | None):
         click.echo(f"Volume: {vol}%{mute_indicator}")
         return
 
-    # Parse level: could be absolute (50) or relative (+10, -10)
     try:
         if level.startswith("+"):
-            result = playback.get_volume()
+            result = client.get_volume()
             if result is None:
                 click.echo("Failed to get current volume", err=True)
                 raise SystemExit(1)
             current, _ = result
             new_level = current + int(level[1:])
         elif level.startswith("-"):
-            result = playback.get_volume()
+            result = client.get_volume()
             if result is None:
                 click.echo("Failed to get current volume", err=True)
                 raise SystemExit(1)
@@ -175,7 +260,7 @@ def volume(level: str | None):
         click.echo(f"Invalid volume level: {level}", err=True)
         raise SystemExit(1)
 
-    error = playback.set_volume(new_level)
+    error = client.set_volume(new_level)
     if error:
         click.echo(f"Failed to set volume: {format_error(error)}", err=True)
         raise SystemExit(1)
@@ -183,9 +268,10 @@ def volume(level: str | None):
 
 
 @cli.command("mute")
-def mute():
+@click.pass_context
+def mute(ctx):
     """Mute volume."""
-    error = playback.mute()
+    error = _client(ctx).mute()
     if error:
         click.echo(f"Failed to mute: {format_error(error)}", err=True)
         raise SystemExit(1)
@@ -193,9 +279,10 @@ def mute():
 
 
 @cli.command("unmute")
-def unmute():
+@click.pass_context
+def unmute(ctx):
     """Unmute volume."""
-    error = playback.unmute()
+    error = _client(ctx).unmute()
     if error:
         click.echo(f"Failed to unmute: {format_error(error)}", err=True)
         raise SystemExit(1)
@@ -207,9 +294,10 @@ def unmute():
 
 @cli.command("shuffle")
 @click.argument("state", type=click.Choice(["on", "off"], case_sensitive=False))
-def shuffle(state: str):
+@click.pass_context
+def shuffle(ctx, state: str):
     """Set shuffle mode."""
-    error = playback.set_shuffle(state.lower() == "on")
+    error = _client(ctx).set_shuffle(state.lower() == "on")
     if error:
         click.echo(f"Failed to set shuffle: {format_error(error)}", err=True)
         raise SystemExit(1)
@@ -218,14 +306,14 @@ def shuffle(state: str):
 
 @cli.command("repeat")
 @click.argument("mode", type=click.Choice(["off", "all", "one"], case_sensitive=False))
-def repeat(mode: str):
+@click.pass_context
+def repeat(ctx, mode: str):
     """Set repeat mode."""
-    mode_value = mode.lower()
-    error = playback.set_repeat(mode_value)
+    error = _client(ctx).set_repeat(mode.lower())
     if error:
         click.echo(f"Failed to change repeat mode: {format_error(error)}", err=True)
         raise SystemExit(1)
-    click.echo(f"Repeat: {mode_value}")
+    click.echo(f"Repeat: {mode.lower()}")
 
 
 # Search
@@ -240,19 +328,14 @@ def repeat(mode: str):
 )
 @click.option("--limit", "-n", default=10, help="Max results per category")
 @click.option("--artist", "-A", default=None, help="Filter songs by artist name")
-def search(
-    query: str,
-    songs: bool,
-    albums: bool,
-    playlists: bool,
-    limit: int,
-    artist: str | None,
-):
+@click.pass_context
+def search(ctx, query, songs, albums, playlists, limit, artist):
     """Search for songs, albums, or playlists."""
+    client = _client(ctx)
     found_any = False
 
     if songs:
-        results = playback.search_songs(query, limit, artist=artist)
+        results = client.search_songs(query, limit=limit, artist=artist)
         if results:
             found_any = True
             click.echo(f"Songs ({len(results)}):")
@@ -261,7 +344,7 @@ def search(
             click.echo()
 
     if albums:
-        results = playback.search_albums(query, limit)
+        results = client.search_albums(query, limit=limit)
         if results:
             found_any = True
             click.echo(f"Albums ({len(results)}):")
@@ -270,7 +353,7 @@ def search(
             click.echo()
 
     if playlists:
-        results = playback.search_playlists(query, limit)
+        results = client.search_playlists(query, limit=limit)
         if results:
             found_any = True
             click.echo(f"Playlists ({len(results)}):")
@@ -286,40 +369,39 @@ def search(
 
 
 @cli.command("love")
-def love():
+@click.pass_context
+def love(ctx):
     """Love the current track."""
-    error = playback.love_current_track()
+    client = _client(ctx)
+    error = client.love()
     if error:
         click.echo(f"Failed to love track: {format_error(error)}", err=True)
         raise SystemExit(1)
-    now_playing = status.get_now_playing()
-    if now_playing:
-        click.echo(f"Loved: {now_playing.name}")
-    else:
-        click.echo("Loved current track")
+    now_playing = client.now_playing()
+    click.echo(f"Loved: {now_playing.name}" if now_playing else "Loved current track")
 
 
 @cli.command("dislike")
-def dislike():
+@click.pass_context
+def dislike(ctx):
     """Dislike the current track."""
-    error = playback.dislike_current_track()
+    client = _client(ctx)
+    error = client.dislike()
     if error:
         click.echo(f"Failed to dislike track: {format_error(error)}", err=True)
         raise SystemExit(1)
-    now_playing = status.get_now_playing()
-    if now_playing:
-        click.echo(f"Disliked: {now_playing.name}")
-    else:
-        click.echo("Disliked current track")
+    now_playing = client.now_playing()
+    click.echo(f"Disliked: {now_playing.name}" if now_playing else "Disliked current track")
 
 
 # Playlists
 
 
 @cli.command("playlists")
-def list_playlists():
+@click.pass_context
+def list_playlists(ctx):
     """List all playlists."""
-    playlists = playback.get_all_playlists()
+    playlists = _client(ctx).list_playlists()
     if not playlists:
         click.echo("No playlists found")
         return
@@ -337,9 +419,10 @@ def playlist():
 
 @playlist.command("create")
 @click.argument("name")
-def playlist_create(name: str):
+@click.pass_context
+def playlist_create(ctx, name: str):
     """Create a new playlist."""
-    success, message = playback.create_playlist(name)
+    success, message = _client(ctx).create_playlist(name)
     click.echo(message, err=not success)
     if not success:
         raise SystemExit(1)
@@ -349,9 +432,33 @@ def playlist_create(name: str):
 @click.argument("playlist_name")
 @click.argument("song")
 @click.option("--artist", "-A", default=None, help="Filter by artist name")
-def playlist_add(playlist_name: str, song: str, artist: str | None):
+@click.pass_context
+def playlist_add(ctx, playlist_name: str, song: str, artist: str | None):
     """Add a song to a playlist."""
-    if not playback.add_song_to_playlist_interactive(playlist_name, song, artist=artist):
+    client = _client(ctx)
+    songs = client.search_songs(song, artist=artist)
+
+    if not songs:
+        click.echo(f"No songs found matching '{song}'")
+        raise SystemExit(1)
+
+    if len(songs) == 1:
+        selected_id, selected_display = songs[0]
+    else:
+        click.echo(f"Found {len(songs)} matching songs:")
+        result = select_item(songs, "Select a song")
+        if result is None:
+            if not is_non_interactive():
+                click.echo("Cancelled")
+            raise SystemExit(1)
+        selected_id = result
+        selected_display = next(d for i, d in songs if i == selected_id)
+
+    success, message = client.add_to_playlist(playlist_name, selected_id)
+    if success:
+        click.echo(f'Added "{selected_display}" to "{playlist_name}"')
+    else:
+        click.echo(message, err=True)
         raise SystemExit(1)
 
 
@@ -359,11 +466,34 @@ def playlist_add(playlist_name: str, song: str, artist: str | None):
 @click.argument("playlist_name")
 @click.argument("song")
 @click.option("--artist", "-A", default=None, help="Filter by artist name")
-def playlist_remove(playlist_name: str, song: str, artist: str | None):
+@click.pass_context
+def playlist_remove(ctx, playlist_name: str, song: str, artist: str | None):
     """Remove a song from a playlist."""
-    if not playback.remove_song_from_playlist_interactive(
-        playlist_name, song, artist=artist
-    ):
+    from apple_music.playback import search_songs_in_playlist
+
+    songs = search_songs_in_playlist(playlist_name, song, artist=artist)
+
+    if not songs:
+        click.echo(f"No songs found matching '{song}' in playlist '{playlist_name}'")
+        raise SystemExit(1)
+
+    if len(songs) == 1:
+        selected_id, selected_display = songs[0]
+    else:
+        click.echo(f"Found {len(songs)} matching songs in '{playlist_name}':")
+        result = select_item(songs, "Select a song")
+        if result is None:
+            if not is_non_interactive():
+                click.echo("Cancelled")
+            raise SystemExit(1)
+        selected_id = result
+        selected_display = next(d for i, d in songs if i == selected_id)
+
+    success, message = _client(ctx).remove_from_playlist(playlist_name, selected_id)
+    if success:
+        click.echo(f'Removed "{selected_display}" from "{playlist_name}"')
+    else:
+        click.echo(message, err=True)
         raise SystemExit(1)
 
 
@@ -373,15 +503,16 @@ def playlist_remove(playlist_name: str, song: str, artist: str | None):
 @cli.command("airplay")
 @click.argument("device", required=False)
 @click.option("--off", is_flag=True, help="Deselect the device")
-def airplay(device: str | None, off: bool):
+@click.pass_context
+def airplay(ctx, device: str | None, off: bool):
     """List or select AirPlay devices."""
-    devices = playback.get_airplay_devices()
+    client = _client(ctx)
+    devices = client.airplay_devices()
 
     if device is None:
         if not devices:
             click.echo("No AirPlay devices found")
             return
-
         click.echo("AirPlay devices:")
         for name, kind, available, selected in devices:
             status_str = ""
@@ -392,7 +523,6 @@ def airplay(device: str | None, off: bool):
             click.echo(f"  {name} ({kind}){status_str}")
         return
 
-    # Find matching device
     matching = [d for d in devices if device.lower() in d[0].lower()]
     if not matching:
         click.echo(f"No device found matching '{device}'", err=True)
@@ -405,15 +535,11 @@ def airplay(device: str | None, off: bool):
         raise SystemExit(1)
 
     target_name = matching[0][0]
-    error = playback.set_airplay_device(target_name, not off)
+    error = client.set_airplay(target_name, not off)
     if error:
         click.echo(f"Failed to set AirPlay device: {format_error(error)}", err=True)
         raise SystemExit(1)
-
-    if off:
-        click.echo(f"Deselected: {target_name}")
-    else:
-        click.echo(f"Selected: {target_name}")
+    click.echo(f"{'Deselected' if off else 'Selected'}: {target_name}")
 
 
 # Catalog (Apple Music streaming)
@@ -425,16 +551,36 @@ def catalog_cmd():
     pass
 
 
-# Register the group with the name "catalog" (avoiding conflict with the imported module)
 cli.add_command(catalog_cmd, name="catalog")
 
 
 @catalog_cmd.command("search")
 @click.argument("query")
 @click.option("--limit", "-n", default=10, help="Max results")
-def catalog_search(query: str, limit: int):
+@click.pass_context
+def catalog_search(ctx, query: str, limit: int):
     """Search Apple Music catalog and open the song in Music."""
-    if not catalog.search_and_open(query, limit):
+    client = _client(ctx)
+    results = client.search_catalog(query, limit=limit)
+
+    if not results:
+        click.echo(f"No results found for '{query}' in Apple Music catalog")
+        raise SystemExit(1)
+
+    if len(results) == 1:
+        track_url, display = results[0]
+    else:
+        click.echo(f"Found {len(results)} results in Apple Music:")
+        result = select_item(results, "Select a song")
+        if result is None:
+            if not is_non_interactive():
+                click.echo("Cancelled")
+            raise SystemExit(1)
+        track_url = result
+        display = next(d for u, d in results if u == track_url)
+
+    click.echo(f"Opening in Apple Music: {display}")
+    if not client.open_catalog_track(track_url):
         raise SystemExit(1)
 
 

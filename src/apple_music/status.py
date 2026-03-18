@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from clawtunes_helpers.applescript import run_applescript
+from .applescript import run_applescript
 
 
 @dataclass

@@ -60,7 +60,7 @@ def test_cli_help_shows_non_interactive_and_first():
 MULTI_SONG_APPLESCRIPT_OUTPUT = "1|Song A|Artist A|Album A\n2|Song B|Artist B|Album B\n"
 
 
-@patch("clawtunes_helpers.playback.run_applescript")
+@patch("apple_music.playback.run_applescript")
 def test_non_interactive_lists_matches_without_prompt(mock_applescript):
     mock_applescript.return_value = (MULTI_SONG_APPLESCRIPT_OUTPUT, "", 0)
     runner = CliRunner()
@@ -71,7 +71,7 @@ def test_non_interactive_lists_matches_without_prompt(mock_applescript):
     assert result.exit_code == 1
 
 
-@patch("clawtunes_helpers.playback.run_applescript")
+@patch("apple_music.playback.run_applescript")
 def test_first_auto_selects_first_match(mock_applescript):
     mock_applescript.side_effect = [
         (MULTI_SONG_APPLESCRIPT_OUTPUT, "", 0),  # search_songs

@@ -1,6 +1,6 @@
 """Tests for playback helpers."""
 
-from clawtunes_helpers import playback
+from apple_music import playback
 
 
 def test_search_songs_uses_args_and_parses(monkeypatch):

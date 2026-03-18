@@ -1,62 +1,47 @@
-# CLAUDE.md
+# clawtunes
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-Clawtunes is a command-line tool for controlling Apple Music on macOS. It uses AppleScript to communicate with the Music app, enabling search, playback control, volume management, and library operations from the terminal.
-
-## Common Commands
-
-```bash
-# Development setup (choose one)
-just install              # Install with pip in editable mode
-nix develop              # Or use Nix flake environment
-
-# Run the tool during development
-clawtunes --help
-
-# Testing
-just test                 # Run all tests
-just test-match PATTERN   # Run tests matching pattern (e.g., just test-match test_status)
-just test-cov             # Run tests with coverage report
-
-# Code quality
-just lint                 # Run all linters (black, ruff, mypy)
-just format               # Auto-format code with black
-just fix                  # Auto-fix issues (format + ruff --fix)
-just check                # Full CI-equivalent checks (lint + test)
-
-# Build
-just build                # Create wheel distribution
-```
+CLI for controlling Apple Music, backed by the `apple_music` Python library.
 
 ## Architecture
 
 ```
 src/
-├── clawtunes/              # CLI package
-│   └── cli.py              # Click-based command definitions
-└── clawtunes_helpers/      # Apple Music control logic
-    ├── applescript.py      # AppleScript execution wrapper (osascript)
-    ├── catalog.py          # Apple Music catalog search/open helpers
-    ├── playback.py         # Core music operations (search, play, volume, shuffle, etc.)
-    ├── selection.py        # Interactive numbered menu for multiple matches
-    └── status.py           # Now-playing info and player state
+├── apple_music/            # Access library (no CLI dependencies)
+│   ├── client.py           # MusicClient: unified API (single entry point)
+│   ├── applescript.py      # AppleScript execution wrapper (osascript)
+│   ├── catalog.py          # Apple Music catalog search (iTunes Search API)
+│   ├── playback.py         # Library operations: search, play, volume, playlists, AirPlay
+│   └── status.py           # Now-playing info and player state (NowPlaying dataclass)
+├── clawtunes/              # CLI package (consumes apple_music)
+│   ├── cli.py              # Click-based commands calling MusicClient
+│   └── selection.py        # Interactive numbered menu for multiple matches
+plugin/
+  claude-code/              # Claude Code plugin (calls CLI)
 ```
 
-**Key patterns:**
-- All Apple Music interaction happens via AppleScript strings executed through `osascript`
-- AppleScript returns pipe-delimited data that gets parsed in Python
-- The `playback.py` module contains Music app operations for playback, playlists, and device controls
-- Mute state is cached in `~/Library/Caches/clawtunes/` for unmute functionality
+Dependency direction: `plugin → CLI (clawtunes) → MusicClient (apple_music) → AppleScript`
 
-## Testing
+## Python API
 
-Tests use pytest with fixtures that mock AppleScript execution:
-- `mock_applescript` - patches `run_applescript()` to return predefined output
-- Tests verify CLI output and correct AppleScript invocation
+```python
+from apple_music import MusicClient
+client = MusicClient()
+client.now_playing()          # NowPlaying | None
+client.search_songs("query")  # list of (id, display_text)
+client.pause()                # error string | None
+```
 
-## CI/CD
+## Development
 
-GitHub Actions workflow (`.github/workflows/build.yml`) runs formatting, linting, type checking, and tests using Nix for reproducibility.
+```bash
+pip install -e ".[dev]"
+just test
+just check
+```
+
+## Key constraints
+
+- `MusicClient` is the single entry point for the `apple_music` library
+- The library has zero CLI dependencies — `click` is only in `clawtunes/`
+- All Apple Music interaction goes through AppleScript (`osascript`)
+- Mute state is cached in `~/Library/Caches/clawtunes/`

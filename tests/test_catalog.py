@@ -2,7 +2,7 @@
 
 import json
 
-from clawtunes_helpers import catalog
+from apple_music import catalog
 
 
 def test_search_catalog_parses_json(monkeypatch):
